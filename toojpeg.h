@@ -3,6 +3,8 @@
 // written by Stephan Brumme, 2018-2019
 // see https://create.stephan-brumme.com/toojpeg/
 //
+// patched by Masaaki Korematsu 2021
+//
 
 // This is a compact baseline JPEG/JFIF writer, written in C++ (but looks like C for the most part).
 // Its interface has only one function: writeJpeg() - and that's it !
@@ -25,16 +27,16 @@ namespace TooJpeg
   // if you prefer stylish C++11 syntax then it can be a lambda, too:
   // auto myOutput = [](unsigned char oneByte, void* opaque) { fputc(oneByte, output); };
 
-  // output       - callback that stores a single byte (writes to disk, memory, ...)
-  // opaque       - private data object passed to callback
-  // pixels       - stored in RGB format or grayscale, stored from upper-left to lower-right
-  // width,height - image size
-  // isRGB        - true if RGB format (3 bytes per pixel); false if grayscale (1 byte per pixel)
-  // quality      - between 1 (worst) and 100 (best)
-  // downsample   - if true then YCbCr 4:2:0 format is used (smaller size, minor quality loss) instead of 4:4:4, not relevant for grayscale
-  // comment      - optional JPEG comment (0/NULL if no comment), must not contain ASCII code 0xFF
+  // output           - callback that stores a single byte (writes to disk, memory, ...)
+  // opaque           - private data object passed to callback
+  // pixels           - stored in RGB format or grayscale, stored from upper-left to lower-right
+  // width,height     - image size
+  // pixel_components - source component count; 4 for RGBA format (alpha channel will be ignored), 3 for RGB format, 1 for grayscale
+  // quality          - between 1 (worst) and 100 (best)
+  // downsample       - if true then YCbCr 4:2:0 format is used (smaller size, minor quality loss) instead of 4:4:4, not relevant for grayscale
+  // comment          - optional JPEG comment (0/NULL if no comment), must not contain ASCII code 0xFF
   bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels, unsigned short width, unsigned short height,
-                 bool isRGB = true, unsigned char quality = 90, bool downsample = false, const char* comment = nullptr);
+                 unsigned char pixel_components = 3, unsigned char quality = 90, bool downsample = false, const char* comment = nullptr);
 } // namespace TooJpeg
 
 // My main inspiration was Jon Olick's Minimalistic JPEG writer

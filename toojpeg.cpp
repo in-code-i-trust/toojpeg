@@ -348,7 +348,7 @@ namespace TooJpeg
 {
 // the only exported function ...
 bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigned short width, unsigned short height,
-               bool isRGB, unsigned char quality_, bool downsample, const char* comment)
+               unsigned char pixel_components, unsigned char quality_, bool downsample, const char* comment)
 {
   // reject invalid pointers
   if (output == nullptr || pixels_ == nullptr)
@@ -356,15 +356,19 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
   // check image format
   if (width == 0 || height == 0)
     return false;
+  // check pixel format
+  if (pixel_components == 0 || pixel_components == 2 || pixel_components > 4)
+    return false;
 
   // number of components
-  const auto numComponents = isRGB ? 3 : 1;
+  const auto numComponents = pixel_components >= 3 ? 3 : 1;
+  const bool isGrayscale = numComponents == 1;
   // note: if there is just one component (=grayscale), then only luminance needs to be stored in the file
   //       thus everything related to chrominance need not to be written to the JPEG
   //       I still compute a few things, like quantization tables to avoid a complete code mess
 
   // grayscale images can't be downsampled (because there are no Cb + Cr channels)
-  if (!isRGB)
+  if (isGrayscale)
     downsample = false;
 
   // wrapper for all output operations
@@ -420,11 +424,11 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
   }
 
   // write quantization tables
-  bitWriter.addMarker(0xDB, 2 + (isRGB ? 2 : 1) * (1 + 8*8)); // length: 65 bytes per table + 2 bytes for this length field
+  bitWriter.addMarker(0xDB, 2 + ((pixel_components >= 3) ? 2 : 1) * (1 + 8*8)); // length: 65 bytes per table + 2 bytes for this length field
                                                               // each table has 64 entries and is preceded by an ID byte
 
   bitWriter   << 0x00 << quantLuminance;   // first  quantization table
-  if (isRGB)
+  if ((pixel_components >= 3))
     bitWriter << 0x01 << quantChrominance; // second quantization table, only relevant for color images
 
   // ////////////////////////////////////////
@@ -448,7 +452,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
   // ////////////////////////////////////////
   // Huffman tables
   // DHT marker - define Huffman tables
-  bitWriter.addMarker(0xC4, isRGB ? (2+208+208) : (2+208));
+  bitWriter.addMarker(0xC4, (pixel_components >= 3) ? (2+208+208) : (2+208));
                             // 2 bytes for the length field, store chrominance only if needed
                             //   1+16+12  for the DC luminance
                             //   1+16+162 for the AC luminance   (208 = 1+16+12 + 1+16+162)
@@ -472,7 +476,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
   // chrominance is only relevant for color images
   BitCode huffmanChrominanceDC[256];
   BitCode huffmanChrominanceAC[256];
-  if (isRGB)
+  if ((pixel_components >= 3))
   {
     // store luminance's DC+AC Huffman table definitions
     bitWriter << 0x01 // highest 4 bits: 0 => DC, lowest 4 bits: 1 => Cr,Cb (baseline)
@@ -578,16 +582,16 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
                 column++;
 
               // grayscale images have solely a Y channel which can be easily derived from the input pixel by shifting it by 128
-              if (!isRGB)
+              if (isGrayscale)
               {
                 Y[deltaY][deltaX] = pixels[pixelPos] - 128.f;
                 continue;
               }
 
               // RGB: 3 bytes per pixel (whereas grayscale images have only 1 byte per pixel)
-              auto r = pixels[3 * pixelPos    ];
-              auto g = pixels[3 * pixelPos + 1];
-              auto b = pixels[3 * pixelPos + 2];
+              auto r = pixels[pixel_components * pixelPos    ];
+              auto g = pixels[pixel_components * pixelPos + 1];
+              auto b = pixels[pixel_components * pixelPos + 2];
 
               Y   [deltaY][deltaX] = rgb2y (r, g, b) - 128; // again, the JPEG standard requires Y to be shifted by 128
               // YCbCr444 is easy - the more complex YCbCr420 has to be computed about 20 lines below in a second pass
@@ -605,7 +609,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
       }
 
       // grayscale images don't need any Cb and Cr information
-      if (!isRGB)
+      if (isGrayscale)
         continue;
 
       // ////////////////////////////////////////
@@ -616,11 +620,11 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
         {
           auto row      = minimum(mcuY + 2*deltaY, maxHeight); // each deltaX/Y step covers a 2x2 area
           auto column   =         mcuX;                        // column is updated inside next loop
-          auto pixelPos = (row * int(width) + column) * 3;     // numComponents = 3
+          auto pixelPos = (row * int(width) + column) * pixel_components;     // numComponents = pixel_components
 
           // deltas (in bytes) to next row / column, must not exceed image borders
-          auto rowStep    = (row    < maxHeight) ? 3 * int(width) : 0; // always numComponents*width except for bottom    line
-          auto columnStep = (column < maxWidth ) ? 3              : 0; // always numComponents       except for rightmost pixel
+          auto rowStep    = (row    < maxHeight) ? pixel_components * int(width) : 0; // always numComponents*width except for bottom    line
+          auto columnStep = (column < maxWidth ) ? pixel_components              : 0; // always numComponents       except for rightmost pixel
 
           for (short deltaX = 0; deltaX < 8; deltaX++)
           {
@@ -639,14 +643,14 @@ bool writeJpeg(WRITE_ONE_BYTE output, void* opaque, const void* pixels_, unsigne
             Cr[deltaY][deltaX] = rgb2cr(float(r), float(g), float(b)) / 4.f; // it's a bit faster if done AFTER CbCr conversion
 
             // step forward to next 2x2 area
-            pixelPos += 2*3; // 2 pixels => 6 bytes (2*numComponents)
+            pixelPos += 2*pixel_components; // 2 pixels => 6 bytes (2*pixel_components)
             column   += 2;
 
             // reached right border ?
             if (column >= maxWidth)
             {
               columnStep = 0;
-              pixelPos = ((row + 1) * int(width) - 1) * 3; // same as (row * width + maxWidth) * numComponents => current's row last pixel
+              pixelPos = ((row + 1) * int(width) - 1) * pixel_components; // same as (row * width + maxWidth) * numComponents => current's row last pixel
             }
           }
         } // end of YCbCr420 code for Cb and Cr
